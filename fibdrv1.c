@@ -6,7 +6,7 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
-
+#include "bn.h"
 MODULE_LICENSE("Dual MIT/GPL");
 MODULE_AUTHOR("National Cheng Kung University, Taiwan");
 MODULE_DESCRIPTION("Fibonacci engine driver");
@@ -24,24 +24,26 @@ static struct cdev *fib_cdev;
 static struct class *fib_class;
 static DEFINE_MUTEX(fib_mutex);
 
-static long long fib_sequence(long long k)
+bn *fib_sequence(unsigned int n)
 {
-    /* FIXME: C99 variable-length array (VLA) is not allowed in Linux kernel. */
-    if (k < 2)
-        return k;
-    __uint128_t a = 0, b = 1, t1, t2;
-
-    int len = 64 - __builtin_clzl(k);
-    while (len > 0) {
-        t1 = a * (2 * b - a);
-        t2 = b * b + a * a;
-        a = t1; b = t2;
-        if (k >> (--len) & 1) {
-            t1 = a + b;
-            a = b; b = t1;
-        }
+    bn *dest = bn_alloc(1);
+    if (n < 2) {  // Fib(0) = 0, Fib(1) = 1
+        dest->number[0] = n;
+        return dest;
     }
-    return a;
+
+    bn *a = bn_alloc(1);
+    bn *b = bn_alloc(1);
+    dest->number[0] = 1;
+
+    for (unsigned int i = 1; i < n; i++) {
+        bn_swap(b, dest);
+        bn_add(a, b, dest);
+        bn_swap(a, b);
+    }
+    bn_free(a);
+    bn_free(b);
+    return dest;
 }
 
 static int fib_open(struct inode *inode, struct file *file)
@@ -65,7 +67,12 @@ static ssize_t fib_read(struct file *file,
                         size_t size,
                         loff_t *offset)
 {
-    return (ssize_t) fib_sequence(*offset);
+    bn *res = fib_sequence(*offset);
+    if (copy_to_user(buf, res->number, res->size * sizeof(int)))
+        return -EFAULT;
+    int sz = res->size;
+    bn_free(res);
+    return (ssize_t) sz;
 }
 
 /* write operation is skipped */
@@ -91,9 +98,6 @@ static loff_t fib_device_lseek(struct file *file, loff_t offset, int orig)
         new_pos = MAX_LENGTH - offset;
         break;
     }
-
-    if (new_pos > MAX_LENGTH)
-        new_pos = MAX_LENGTH;  // max case
     if (new_pos < 0)
         new_pos = 0;        // min case
     file->f_pos = new_pos;  // This is what we'll use now

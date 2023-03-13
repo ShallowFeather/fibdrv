@@ -7,6 +7,36 @@
 
 #define FIB_DEV "/dev/fibonacci"
 
+static char *bn_to_string(const int *num, ssize_t size)
+{
+    // log10(x) = log2(x) / log2(10) ~= log2(x) / 3.322
+    size_t len = (8 * sizeof(int) * size) / 3 + 2;
+    char *s = malloc(len);
+    char *p = s;
+
+    memset(s, '0', len - 1);
+    s[len - 1] = '\0';
+
+    for (int i = size - 1; i >= 0; i--) {
+        for (unsigned int d = 1U << 31; d; d >>= 1) {
+            /* binary -> decimal string */
+            int carry = ((d & num[i]) != 0);
+            for (int j = len - 2; j >= 0; j--) {
+                s[j] += s[j] - '0' + carry;  // double it
+                carry = (s[j] > '9');
+                if (carry)
+                    s[j] -= 10;
+            }
+        }
+    }
+    // skip leading zero
+    while (p[0] == '0' && p[1] != '\0') {
+        p++;
+    }
+    memmove(s, p, strlen(p) + 1);
+    return s;
+}
+
 int main()
 {
     long long sz;
@@ -38,10 +68,12 @@ int main()
     for (int i = offset; i >= 0; i--) {
         lseek(fd, i, SEEK_SET);
         sz = read(fd, buf, 1);
+        char *str = bn_to_string(buf, sz);
         printf("Reading from " FIB_DEV
                " at offset %d, returned the sequence "
-               "%lld.\n",
-               i, sz);
+               "%s.\n",
+               i, str);
+        free(str);
     }
 
     close(fd);
